@@ -428,6 +428,8 @@ void *TrainModelThread(void *id) {
       batch_logL = 0;
       alpha = starting_alpha * (1 - word_count_actual / (real)(train_words + 1));
       if (alpha < starting_alpha * 0.0001) alpha = starting_alpha * 0.0001;
+      // Early timeout
+      if(difftime(time(0), start_time) > timeout) break;
     }
     // Read new sentence
     if (sentence_length == 0) {
@@ -449,8 +451,6 @@ void *TrainModelThread(void *id) {
       }
       sentence_position = 0;
     }
-    // Early timeout
-    if(difftime(time(0), start_time) > timeout) break;
     if (feof(fi)) break;
     if (word_count > train_words / num_threads) break;
     word = sen[sentence_position];
