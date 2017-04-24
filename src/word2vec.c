@@ -416,6 +416,13 @@ void *TrainModelThread(void *id) {
     if (word_count - last_word_count > 10000) {
       word_count_actual += word_count - last_word_count;
       last_word_count = word_count;
+      alpha = starting_alpha * (1 - word_count_actual / (real)(train_words + 1));
+      if (alpha < starting_alpha * 0.0001) alpha = starting_alpha * 0.0001;
+      // Early termination
+      if(difftime(time(0), start_time) > timeout) break;
+    }
+
+    if (batch_size > 1000000) {
       if ((debug_mode > 1)) {
         now=clock();
         printf("Alpha: %f LogL: %.4f Progress: %.2f%%  Words/thread/sec: %.2fk  \n", alpha,
@@ -426,10 +433,6 @@ void *TrainModelThread(void *id) {
       }
       batch_size = 0;
       batch_logL = 0;
-      alpha = starting_alpha * (1 - word_count_actual / (real)(train_words + 1));
-      if (alpha < starting_alpha * 0.0001) alpha = starting_alpha * 0.0001;
-      // Early timeout
-      if(difftime(time(0), start_time) > timeout) break;
     }
     // Read new sentence
     if (sentence_length == 0) {
