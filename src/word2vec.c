@@ -521,7 +521,7 @@ void ReadEvalSet() {
     }
   }
 
-  printf("Evaluation logL %.4f\n", batch_logL / (real)batch_size);
+  printf("Evaluation logL %.8f\n", batch_logL / (real)batch_size);
 }
 
 void InitNet() {
@@ -591,7 +591,7 @@ void *TrainModelThread(void *id) {
     if (batch_size > 1000000) {
       if ((debug_mode > 1)) {
         now=clock();
-        printf("Alpha: %f LogL: %.4f Progress: %.2f%%  Words/thread/sec: %.2fk\n", alpha,
+        printf("Alpha: %f LogL: %.8f Progress: %.2f%%  Words/thread/sec: %.2fk\n", alpha,
          batch_logL / (real)batch_size,
          word_count_actual / (real)(train_words + 1) * 100,
          word_count_actual / ((real)(now - start + 1) / (real)CLOCKS_PER_SEC * 1000));
