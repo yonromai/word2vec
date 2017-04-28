@@ -54,6 +54,10 @@ real eps = 1e-8;
 real m_t = 0, v_t = 0, m_h_t = 0, v_h_t = 0;
 real g_t = 0;
 int adam_t = 1, g_t_updates = 1;
+// Convergence
+int max_stale_batches = 1000000;
+int batches_since_improv = 0;
+real best_loss = 1e9;
 
 int hs = 1, negative = 0;
 const int table_size = 1e8;
@@ -609,6 +613,19 @@ void *TrainModelThread(void *id) {
          word_count_actual / ((real)(now - start + 1) / (real)CLOCKS_PER_SEC * 1000));
         fflush(stdout);
       }
+
+      if ((batch_logL / (real)batch_size) < best_loss) {
+        batches_since_improv = 0;
+        best_loss = batch_logL / (real)batch_size;
+      } else if((batches_since_improv / (real)num_threads) > max_stale_batches) {
+        // converged
+        if ((long long)id == 0) {
+          printf("[Stopping] Stale loss: %.8f\n", best_loss);  
+        }
+        break;
+      }
+      batches_since_improv++;
+
       batch_size = 0;
       batch_logL = 0;
 
@@ -629,7 +646,12 @@ void *TrainModelThread(void *id) {
       } 
 
       // Early termination
-      if(difftime(time(0), start_time) > timeout) break;
+      if(difftime(time(0), start_time) > timeout) {
+        if ((long long)id == 0) {
+          printf("[Stopping] Training timeout\n");
+        }
+        break;
+      }
     }
     // Read new sentence
     if (sentence_length == 0) {
@@ -1000,6 +1022,8 @@ int main(int argc, char **argv) {
     printf("\t\tThe <file> that constains the cross validation dataset\n");
     printf("\t-adam <int>\n");
     printf("\t\tUse ADAM gradient update; default is 0 (1 = used)\n");
+    printf("\t-max-stale-batches <int>\n");
+    printf("\t\tAfter <int> batches without loss decrease, training will stop ; default is 1000000 (a lot)\n");
     printf("\nExamples:\n");
     printf("./word2vec -train data.txt -output vec.txt -debug 2 -size 200 -window 5 -sample 1e-4 -negative 5 -hs 0 -binary 0 -cbow 1\n\n");
     return 0;
@@ -1025,6 +1049,7 @@ int main(int argc, char **argv) {
   if ((i = ArgPos((char *)"-min-count", argc, argv)) > 0) min_count = atoi(argv[i + 1]);
   if ((i = ArgPos((char *)"-classes", argc, argv)) > 0) classes = atoi(argv[i + 1]);
   if ((i = ArgPos((char *)"-timeout", argc, argv)) > 0) timeout = atoi(argv[i + 1]);
+  if ((i = ArgPos((char *)"-max-stale-batches", argc, argv)) > 0) max_stale_batches = atoi(argv[i + 1]);
   if ((i = ArgPos((char *)"-eval-set", argc, argv)) > 0) strcpy(eval_set_file, argv[i + 1]);
   if ((i = ArgPos((char *)"-hs", argc, argv)) > 0) adam = atoi(argv[i + 1]);
   vocab = (struct vocab_word *)calloc(vocab_max_size, sizeof(struct vocab_word));
