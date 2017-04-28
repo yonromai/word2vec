@@ -41,19 +41,11 @@ int binary = 0, cbow = 0, debug_mode = 2, window = 5, min_count = 5, num_threads
 int *vocab_hash;
 long long vocab_max_size = 1000, vocab_size = 0, layer1_size = 100;
 long long train_words = 0, word_count_actual = 0, file_size = 0, classes = 0;
-real sample = 0;
+real alpha = 0.025, starting_alpha, sample = 0;
 real *syn0, *syn1, *syn1neg, *expTable;
 clock_t start;
 int timeout = 3600*24*14, eval_count = 0;
-// Adam params
-int adam = 0;
-real starting_alpha = 0.025;
-real alpha = 0.025;
-real b1 = 0.9, b2 = 0.999;
-real eps = 1e-8;
-real m_t = 0, v_t = 0, m_h_t = 0, v_h_t = 0;
-real g_t = 0;
-int adam_t = 1, g_t_updates = 1;
+
 // Convergence
 int max_stale_batches = 1000000;
 int batches_since_improv = 0;
@@ -579,7 +571,6 @@ void *TrainModelThread(void *id) {
   real f, g;
   real logL, batch_logL = 0, logistic;
   clock_t now;
-
   real *neu1 = (real *)calloc(layer1_size, sizeof(real));
   real *neu1e = (real *)calloc(layer1_size, sizeof(real));
   FILE *fi = fopen(train_file, "rb");
@@ -596,18 +587,16 @@ void *TrainModelThread(void *id) {
     if (word_count - last_word_count > 10000) {
       word_count_actual += word_count - last_word_count;
       last_word_count = word_count;
-
-      if (adam == 0) {
-        alpha = starting_alpha * (1 - word_count_actual / (real)(train_words + 1));
-        if (alpha < starting_alpha * 0.0001) alpha = starting_alpha * 0.0001;
-      }
+      alpha = starting_alpha * (1 - word_count_actual / (real)(train_words + 1));
+      if (alpha < starting_alpha * 0.0001) alpha = starting_alpha * 0.0001;
+      // Early termination
+      if(difftime(time(0), start_time) > timeout) break;
     }
 
     if (batch_size > 1000000) {
       if ((debug_mode > 1)) {
         now=clock();
-        printf("Alpha: %f LogL: %.8f Progress: %.2f%%  Words/thread/sec: %.2fk\n",
-         alpha,
+        printf("Alpha: %f LogL: %.8f Progress: %.2f%%  Words/thread/sec: %.2fk\n", alpha,
          batch_logL / (real)batch_size,
          word_count_actual / (real)(train_words + 1) * 100,
          word_count_actual / ((real)(now - start + 1) / (real)CLOCKS_PER_SEC * 1000));
@@ -628,17 +617,6 @@ void *TrainModelThread(void *id) {
 
       batch_size = 0;
       batch_logL = 0;
-
-      if (adam == 1) {
-        m_t = b1 * m_t + (1 - b1) * (real)(g_t / (real)g_t_updates);
-        v_t = b2 * v_t + (1 - b2) * pow((g_t / (real)g_t_updates), 2);
-        m_h_t = m_t / (real)(1 - pow(b1, adam_t));
-        v_h_t = v_t / (real)(1 - pow(b2, adam_t));
-        alpha = starting_alpha * m_h_t / (real)(pow(v_h_t, .5) + eps);
-        adam_t++;
-        g_t = 0;
-        g_t_updates = 1;
-      }
 
       if (eval_set_file[0] != 0 && (eval_count % (long long)num_threads) == (long long)id) {
         ReadEvalSet();
@@ -719,9 +697,6 @@ void *TrainModelThread(void *id) {
           else f = expTable[(int)((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
           // 'g' is the gradient multiplied by the learning rate
           g = (1 - vocab[word].code[d] - f) * alpha;
-          g_t += fabsf(1 - vocab[word].code[d] - f);
-          g_t_updates += 1;
-
           // Propagate errors output -> hidden
           for (c = 0; c < layer1_size; c++) neu1e[c] += g * syn1[c + l2];
           // Learn weights hidden -> output
@@ -753,9 +728,6 @@ void *TrainModelThread(void *id) {
         else logistic = expTable[(int)((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
 
         g = (label - logistic) * alpha;
-        g_t += fabsf(label - logistic);
-        g_t_updates += 1;
-
         logL += logistic * label + (1 - label) * (1 - logistic);
 
         for (c = 0; c < layer1_size; c++) neu1e[c] += g * syn1neg[c + l2];
@@ -801,6 +773,7 @@ void *TrainModelThread(void *id) {
           l2 = vocab[word].point[d] * layer1_size;
           // Propagate hidden -> output
           for (c = 0; c < layer1_size; c++) f += syn0[c + l1] * syn1[c + l2];
+          
 
           if (f <= -MAX_EXP) continue;
           else if (f >= MAX_EXP) continue;
@@ -808,9 +781,6 @@ void *TrainModelThread(void *id) {
 
           // 'g' is the gradient multiplied by the learning rate
           g = (1 - vocab[word].code[d] - f) * alpha;
-          g_t += fabsf(1 - vocab[word].code[d] - f);
-          g_t_updates += 1;
-
           // Propagate errors output -> hidden
           for (c = 0; c < layer1_size; c++) neu1e[c] += g * syn1[c + l2];
           // Learn weights hidden -> output
@@ -838,15 +808,13 @@ void *TrainModelThread(void *id) {
             f = 0; // dot product
             for (c = 0; c < layer1_size; c++) f += syn0[c + l1] * syn1neg[c + l2];
 
+
             if (f > MAX_EXP) logistic = 1;
             else if (f < -MAX_EXP) logistic = 0;
             // g is grandient times learning rate
             else logistic = expTable[(int)((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
             
             g = (label - logistic) * alpha;
-            g_t += fabsf(label - logistic);
-            g_t_updates += 1;
-
             logL += logistic * label + (1 - label) * (1 - logistic);
 
             // Update
@@ -1020,8 +988,6 @@ int main(int argc, char **argv) {
     printf("\t\tCut-off time in seconds after which the training will be interrupted; default is 3600*24*14 (skip-gram model)\n");
     printf("\t-eval-set <file>\n");
     printf("\t\tThe <file> that constains the cross validation dataset\n");
-    printf("\t-adam <int>\n");
-    printf("\t\tUse ADAM gradient update; default is 0 (1 = used)\n");
     printf("\t-max-stale-batches <int>\n");
     printf("\t\tAfter <int> batches without loss decrease, training will stop ; default is 1000000 (a lot)\n");
     printf("\nExamples:\n");
@@ -1051,7 +1017,6 @@ int main(int argc, char **argv) {
   if ((i = ArgPos((char *)"-timeout", argc, argv)) > 0) timeout = atoi(argv[i + 1]);
   if ((i = ArgPos((char *)"-max-stale-batches", argc, argv)) > 0) max_stale_batches = atoi(argv[i + 1]);
   if ((i = ArgPos((char *)"-eval-set", argc, argv)) > 0) strcpy(eval_set_file, argv[i + 1]);
-  if ((i = ArgPos((char *)"-hs", argc, argv)) > 0) adam = atoi(argv[i + 1]);
   vocab = (struct vocab_word *)calloc(vocab_max_size, sizeof(struct vocab_word));
   vocab_hash = (int *)calloc(vocab_hash_size, sizeof(int));
   expTable = (real *)malloc((EXP_TABLE_SIZE + 1) * sizeof(real));
