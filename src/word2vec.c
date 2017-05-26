@@ -38,6 +38,7 @@ char train_file[MAX_STRING], output_file[MAX_STRING];
 char save_vocab_file[MAX_STRING], read_vocab_file[MAX_STRING], eval_set_file[MAX_STRING];
 struct vocab_word *vocab;
 int binary = 0, cbow = 0, debug_mode = 2, window = 5, min_count = 5, num_threads = 1, min_reduce = 1;
+char output_layer[MAX_STRING];
 int *vocab_hash;
 long long vocab_max_size = 1000, vocab_size = 0, layer1_size = 100;
 long long train_words = 0, word_count_actual = 0, file_size = 0, classes = 0;
@@ -877,6 +878,28 @@ void TrainModel() {
       else for (b = 0; b < layer1_size; b++) fprintf(fo, "%lf ", syn0[a * layer1_size + b]);
       fprintf(fo, "\n");
     }
+
+    // Save the output matrix
+    if(output_layer[0] != 0) {
+      FILE *fo2;
+      fo2 = fopen(output_layer, "wb");
+      fprintf(fo2, "%lld %lld\n", vocab_size, layer1_size);
+      for (a = 0; a < vocab_size; a++) {
+        if (vocab[a].word != NULL) {
+          fprintf(fo2, "%s ", vocab[a].word);
+        }
+        if (hs) {
+          if (binary) for (b = 0; b < layer1_size; b++) fwrite(&syn1[a * layer1_size + b], sizeof(real), 1, fo2);
+          else for (b = 0; b < layer1_size; b++) fprintf(fo2, "%lf ", syn1[a * layer1_size + b]);
+        }
+        if (negative > 0) {
+          if (binary) for (b = 0; b < layer1_size; b++) fwrite(&syn1neg[a * layer1_size + b], sizeof(real), 1, fo2);
+          else for (b = 0; b < layer1_size; b++) fprintf(fo2, "%lf ", syn1neg[a * layer1_size + b]);
+        }
+        fprintf(fo2, "\n");
+      }
+      fclose(fo2);
+    }
   } else {
     // Run K-means on the word vectors
     int clcn = classes, iter = 10, closeid;
@@ -955,6 +978,8 @@ int main(int argc, char **argv) {
     printf("\t\tUse text data from <file> to train the model\n");
     printf("\t-output <file>\n");
     printf("\t\tUse <file> to save the resulting word vectors / word clusters\n");
+    printf("\t-output-layer <file>\n");
+    printf("\t\tOutput both in and out matrix weights\n");
     printf("\t-size <int>\n");
     printf("\t\tSet size of word vectors; default is 100\n");
     printf("\t-window <int>\n");
@@ -995,6 +1020,7 @@ int main(int argc, char **argv) {
     return 0;
   }
   output_file[0] = 0;
+  output_layer[0] = 0;
   save_vocab_file[0] = 0;
   read_vocab_file[0] = 0;
   eval_set_file[0] = 0;
@@ -1007,6 +1033,7 @@ int main(int argc, char **argv) {
   if ((i = ArgPos((char *)"-cbow", argc, argv)) > 0) cbow = atoi(argv[i + 1]);
   if ((i = ArgPos((char *)"-alpha", argc, argv)) > 0) alpha = atof(argv[i + 1]);
   if ((i = ArgPos((char *)"-output", argc, argv)) > 0) strcpy(output_file, argv[i + 1]);
+  if ((i = ArgPos((char *)"-output-layer", argc, argv)) > 0) strcpy(output_layer, argv[i + 1]);
   if ((i = ArgPos((char *)"-window", argc, argv)) > 0) window = atoi(argv[i + 1]);
   if ((i = ArgPos((char *)"-sample", argc, argv)) > 0) sample = atof(argv[i + 1]);
   if ((i = ArgPos((char *)"-hs", argc, argv)) > 0) hs = atoi(argv[i + 1]);
